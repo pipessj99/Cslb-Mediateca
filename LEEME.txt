@@ -1,0 +1,19 @@
+CSLB Mediateca - parche NAS
+
+Copia el contenido de esta carpeta sobre la raíz del repositorio Cslb-Mediateca.
+
+Luego ejecuta:
+  python3 apply_patch.py
+  npm install
+  npm run typecheck
+  npm run build
+
+Después:
+  git add .
+  git commit -m "Conectar mediateca al NAS"
+  git push
+
+En Vercel agrega:
+  NEXT_PUBLIC_API_URL=https://mycloudex2ultra.tail905e79.ts.net
+
+y haz Redeploy si el push no lo hace automáticamente.
