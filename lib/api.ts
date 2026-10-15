@@ -45,7 +45,11 @@ async function request(path: string, init: RequestInit = {}) {
       cache: 'no-store',
     });
   } catch {
-    throw new Error('No se pudo conectar con el NAS. Revisa que el servidor y Tailscale estén encendidos.');
+    throw new Error(
+      path.includes('/api/media/upload')
+        ? 'La conexión se interrumpió durante la subida. El sistema intentará enviar los archivos en partes pequeñas.'
+        : 'No se pudo conectar con el NAS. Revisa que el servidor y Tailscale estén encendidos.'
+    );
   }
 
   const type = res.headers.get('content-type') || '';
@@ -60,6 +64,67 @@ async function request(path: string, init: RequestInit = {}) {
   }
 
   return data;
+}
+
+async function uploadMedia(form: FormData) {
+  const file = form.get('file');
+
+  if (!(file instanceof File) || !file.size) {
+    throw new Error('Selecciona un archivo de audio o video.');
+  }
+
+  const init = await request('/api/media/upload/init', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      title: String(form.get('title') || ''),
+      description: String(form.get('description') || ''),
+      category: String(form.get('category') || ''),
+      filename: file.name,
+      contentType: file.type || '',
+      size: file.size,
+    }),
+  }) as {uploadId:string; received:number};
+
+  const chunkSize = 2 * 1024 * 1024;
+  let offset = Number(init.received || 0);
+
+  while (offset < file.size) {
+    const end = Math.min(offset + chunkSize, file.size);
+    const chunk = file.slice(offset, end);
+
+    let lastError: unknown = null;
+    let uploaded = false;
+
+    for (let attempt = 0; attempt < 3 && !uploaded; attempt++) {
+      try {
+        const result = await request(
+          `/api/media/upload/chunk/${encodeURIComponent(init.uploadId)}?offset=${offset}`,
+          {
+            method: 'POST',
+            headers: {'Content-Type': 'application/octet-stream'},
+            body: chunk,
+          }
+        ) as {received:number};
+
+        offset = Number(result.received);
+        uploaded = true;
+      } catch (e) {
+        lastError = e;
+        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 800 * (attempt + 1)));
+      }
+    }
+
+    if (!uploaded) {
+      throw lastError instanceof Error
+        ? lastError
+        : new Error('No se pudo completar la subida.');
+    }
+  }
+
+  return request(`/api/media/upload/complete/${encodeURIComponent(init.uploadId)}`, {
+    method: 'POST',
+  });
 }
 
 function saveAuthResult(data: AuthResult) {
@@ -135,10 +200,7 @@ export async function mediaUrl(id: string) {
 
 export async function saveLibrary(body: FormData | any) {
   if (body instanceof FormData) {
-    return request('/api/media/upload', {
-      method: 'POST',
-      body,
-    });
+    return uploadMedia(body);
   }
 
   if (body.action === 'category') {
@@ -150,6 +212,27 @@ export async function saveLibrary(body: FormData | any) {
         description: body.description,
         parent: body.parent || null,
       }),
+    });
+  }
+
+  if (body.action === 'category-update') {
+    return request('/api/category/update', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        id: body.id,
+        name: body.name,
+        description: body.description,
+        parent: body.parent || null,
+      }),
+    });
+  }
+
+  if (body.action === 'category-delete') {
+    return request('/api/category/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: body.id}),
     });
   }
 

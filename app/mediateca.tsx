@@ -5,7 +5,7 @@ import {loadLibrary,saveLibrary,mediaUrl,signOut} from '../lib/api';
 import {
   Folder,Headphones,Video,Plus,Search,ArrowUpRight,Upload,LayoutGrid,
   MessageSquare,ShieldCheck,X,ChevronRight,ChevronLeft,Play,Trash2,
-  BookOpen,LogOut,KeyRound
+  BookOpen,LogOut,KeyRound,Pencil
 } from 'lucide-react';
 
 type Category={
@@ -97,6 +97,16 @@ export default function Mediateca(){
         parent:f.get('parent')
       };
     }
+
+    if(modal==='edit-category' && currentCat){
+      body={
+        action:'category-update',
+        id:currentCat.id,
+        name:f.get('name'),
+        description:f.get('description'),
+        parent:f.get('parent')
+      };
+    }
     if(modal==='teachers'){
       body={
         action:'teacher',
@@ -126,6 +136,17 @@ export default function Mediateca(){
     if(await mutate(body)){
       if(modal!=='teachers')setModal('');
       else (e.target as HTMLFormElement).reset();
+    }
+  }
+
+  async function removeCurrentCategory(){
+    if(!currentCat)return;
+    if(!confirm(`¿Eliminar la carpeta "${currentCat.name}"? Solo se puede borrar si está vacía.`))return;
+
+    const parent=currentCat.parent_id||'';
+    if(await mutate({action:'category-delete',id:currentCat.id})){
+      setCategory(parent);
+      setModal('');
     }
   }
 
@@ -296,9 +317,19 @@ export default function Mediateca(){
               <p>{currentCat?.description||'Navega por temática, proyecto o curso.'}</p>
             </div>
 
-            {admin&&<button className="text-button" onClick={()=>setModal('category')}>
-              <Plus size={17}/> {category?'Nueva subcarpeta':'Nueva carpeta'}
-            </button>}
+            {admin&&<div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              {currentCat&&<>
+                <button className="secondary" onClick={()=>setModal('edit-category')}>
+                  <Pencil size={15}/> Editar carpeta
+                </button>
+                <button className="secondary" style={{color:'#a44931'}} onClick={()=>void removeCurrentCategory()}>
+                  <Trash2 size={15}/> Eliminar carpeta
+                </button>
+              </>}
+              <button className="text-button" onClick={()=>setModal('category')}>
+                <Plus size={17}/> {category?'Nueva subcarpeta':'Nueva carpeta'}
+              </button>
+            </div>}
           </div>
 
           <div className="filters" style={{marginBottom:16}}>
@@ -434,7 +465,7 @@ export default function Mediateca(){
         <section
           role="dialog"
           aria-modal="true"
-          aria-label={modal==='upload'?'Subir archivo':modal==='category'?'Nueva carpeta':modal==='account'?'Mi cuenta':'Gestionar profesores'}
+          aria-label={modal==='upload'?'Subir archivo':modal==='category'?'Nueva carpeta':modal==='edit-category'?'Editar carpeta':modal==='account'?'Mi cuenta':'Gestionar profesores'}
           className="modal"
           onClick={e=>e.stopPropagation()}
         >
@@ -444,17 +475,21 @@ export default function Mediateca(){
             ?'Sube tu trabajo'
             :modal==='category'
               ?(category?'Nueva subcarpeta':'Nueva carpeta')
-              :modal==='account'
-                ?'Mi cuenta'
-                :'Crear o autorizar profesor'}</h2>
+              :modal==='edit-category'
+                ?'Editar carpeta'
+                :modal==='account'
+                  ?'Mi cuenta'
+                  :'Crear o autorizar profesor'}</h2>
 
           <p>{modal==='upload'
-            ?'Los demás alumnos no podrán ver este archivo. Solo tú y tus profesores.'
+            ?'El archivo se enviará al NAS en partes pequeñas para evitar cortes de conexión.'
             :modal==='category'
               ?'Solo profesores y administradores pueden crear la estructura de carpetas.'
-              :modal==='account'
-                ?'Cambia tu contraseña cuando lo necesites.'
-                :'Crea la cuenta del profesor con correo y contraseña temporal. En su primer ingreso deberá cambiarla y después configurar Google Authenticator.'}</p>
+              :modal==='edit-category'
+                ?'Puedes cambiar el nombre, descripción o mover la carpeta a otra ubicación.'
+                :modal==='account'
+                  ?'Cambia tu contraseña cuando lo necesites.'
+                  :'Crea la cuenta del profesor con correo y contraseña temporal. En su primer ingreso deberá cambiarla y después configurar Google Authenticator.'}</p>
 
           {error&&<p role="alert" className="alert">{error}</p>}
 
@@ -486,23 +521,39 @@ export default function Mediateca(){
                 Descripción (opcional)
                 <textarea name="description" maxLength={2000} placeholder="Cuéntanos un poco sobre tu trabajo…"/>
               </label>
-            </>:modal==='category'?<>
+            </>:(modal==='category'||modal==='edit-category')?<>
               <label>
                 Nombre
-                <input name="name" required maxLength={60} placeholder={category?'Por ejemplo: 7°A':'Por ejemplo: Podcast'}/>
+                <input
+                  name="name"
+                  required
+                  maxLength={60}
+                  defaultValue={modal==='edit-category'?currentCat?.name:''}
+                  placeholder={category?'Por ejemplo: 7°A':'Por ejemplo: Podcast'}
+                />
               </label>
 
               <label>
                 Carpeta superior
-                <select name="parent" defaultValue={category}>
+                <select
+                  name="parent"
+                  defaultValue={modal==='edit-category'?(currentCat?.parent_id||''):category}
+                >
                   <option value="">Raíz de la mediateca</option>
-                  {(data?.categories||[]).map(c=><option key={c.id} value={c.id}>{categoryPath(c.id)}</option>)}
+                  {(data?.categories||[])
+                    .filter(c=>modal!=='edit-category'||c.id!==currentCat?.id)
+                    .map(c=><option key={c.id} value={c.id}>{categoryPath(c.id)}</option>)}
                 </select>
               </label>
 
               <label>
                 Descripción
-                <textarea name="description" maxLength={200} placeholder="¿Qué se guardará en esta carpeta?"/>
+                <textarea
+                  name="description"
+                  maxLength={200}
+                  defaultValue={modal==='edit-category'?currentCat?.description:''}
+                  placeholder="¿Qué se guardará en esta carpeta?"
+                />
               </label>
             </>:modal==='account'?<>
               <label>
@@ -588,9 +639,11 @@ export default function Mediateca(){
                   ?'Subir archivo'
                   :modal==='category'
                     ?'Crear carpeta'
-                    :modal==='account'
-                      ?'Cambiar contraseña'
-                      :'Crear / autorizar profesor'}
+                    :modal==='edit-category'
+                      ?'Guardar cambios'
+                      :modal==='account'
+                        ?'Cambiar contraseña'
+                        :'Crear / autorizar profesor'}
             </button>
           </form>
         </section>
