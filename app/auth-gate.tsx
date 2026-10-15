@@ -1,6 +1,7 @@
 'use client';
 
 import {FormEvent, useEffect, useState} from 'react';
+import QRCode from 'qrcode';
 import {configured, currentUser, login, register, verify2fa, type AuthResult} from '../lib/api';
 
 type Stage = 'auth' | '2fa' | '2fa-setup';
@@ -14,6 +15,8 @@ export default function AuthGate({children}:{children:React.ReactNode}) {
   const [busy,setBusy] = useState(false);
   const [challenge,setChallenge] = useState('');
   const [secret,setSecret] = useState('');
+  const [otpauthUri,setOtpauthUri] = useState('');
+  const [qrData,setQrData] = useState('');
 
   useEffect(() => {
     if (!configured) {
@@ -26,16 +29,44 @@ export default function AuthGate({children}:{children:React.ReactNode}) {
     }).catch(() => setReady(true));
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!otpauthUri) {
+      setQrData('');
+      return;
+    }
+
+    QRCode.toDataURL(otpauthUri, {
+      width: 240,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+    }).then(url => {
+      if (!cancelled) setQrData(url);
+    }).catch(() => {
+      if (!cancelled) setQrData('');
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [otpauthUri]);
+
   function handleAuthResult(result:AuthResult) {
     if ('token' in result) {
       setSigned(true);
       return;
     }
+
     setChallenge(result.challenge);
+
     if ('requires2faSetup' in result) {
       setSecret(result.secret);
+      setOtpauthUri(result.otpauthUri);
       setStage('2fa-setup');
     } else {
+      setSecret('');
+      setOtpauthUri('');
       setStage('2fa');
     }
   }
@@ -75,6 +106,15 @@ export default function AuthGate({children}:{children:React.ReactNode}) {
     } finally {
       setBusy(false);
     }
+  }
+
+  function resetAuth() {
+    setStage('auth');
+    setChallenge('');
+    setSecret('');
+    setOtpauthUri('');
+    setQrData('');
+    setMessage('');
   }
 
   if (!ready) return <div className="auth-wrap"><p>Cargando mediateca…</p></div>;
@@ -140,21 +180,78 @@ export default function AuthGate({children}:{children:React.ReactNode}) {
 
         {stage === '2fa-setup' ? <>
           <p>
-            Esta cuenta tiene permisos de profesor/administrador. Abre Google Authenticator,
-            pulsa <b>+</b> → <b>Introducir clave de configuración</b> y usa esta clave:
+            Escanea este código QR con Google Authenticator. Después escribe el código de 6 dígitos
+            que aparece en la aplicación para terminar la configuración.
           </p>
+
           <div style={{
-            padding:'14px',
-            border:'1px solid #d8e3db',
+            display:'grid',
+            placeItems:'center',
+            margin:'20px 0',
+          }}>
+            {qrData ? (
+              <div style={{
+                background:'#fff',
+                padding:'14px',
+                border:'1px solid #d8e3db',
+                borderRadius:'14px',
+                boxShadow:'0 8px 30px #1232'
+              }}>
+                <img
+                  src={qrData}
+                  width={240}
+                  height={240}
+                  alt="Código QR para configurar Google Authenticator"
+                  style={{display:'block',maxWidth:'100%',height:'auto'}}
+                />
+              </div>
+            ) : (
+              <div style={{
+                width:240,
+                height:240,
+                display:'grid',
+                placeItems:'center',
+                background:'#f4f8f5',
+                border:'1px solid #d8e3db',
+                borderRadius:'14px',
+                color:'#71807d',
+                fontSize:'12px',
+                textAlign:'center',
+                padding:'20px'
+              }}>
+                Generando código QR…
+              </div>
+            )}
+          </div>
+
+          <p style={{textAlign:'center',fontSize:'12px'}}>
+            Google Authenticator → <b>+</b> → <b>Escanear código QR</b>
+          </p>
+
+          <details style={{
+            margin:'18px 0',
+            border:'1px solid #e2e9e4',
             borderRadius:'8px',
-            background:'#f4f8f5',
-            fontFamily:'monospace',
-            letterSpacing:'2px',
-            textAlign:'center',
-            wordBreak:'break-all',
-            margin:'16px 0'
-          }}>{secret}</div>
-          <p>Google Authenticator generará un código de 6 dígitos que cambia cada 30 segundos.</p>
+            padding:'12px'
+          }}>
+            <summary style={{cursor:'pointer',fontSize:'12px',fontWeight:600}}>
+              No puedo escanear el QR
+            </summary>
+            <p style={{fontSize:'12px'}}>
+              También puedes usar la clave de configuración manual:
+            </p>
+            <div style={{
+              padding:'12px',
+              border:'1px solid #d8e3db',
+              borderRadius:'8px',
+              background:'#f4f8f5',
+              fontFamily:'monospace',
+              letterSpacing:'2px',
+              textAlign:'center',
+              wordBreak:'break-all',
+              fontSize:'12px'
+            }}>{secret}</div>
+          </details>
         </> : <p>Escribe el código de 6 dígitos que aparece en Google Authenticator.</p>}
 
         <form onSubmit={submit2fa}>
@@ -172,18 +269,14 @@ export default function AuthGate({children}:{children:React.ReactNode}) {
               autoFocus
             />
           </label>
+
           <button disabled={busy} className="primary full">
             {busy ? 'Verificando…' : stage === '2fa-setup' ? 'Activar y entrar' : 'Verificar código'}
           </button>
         </form>
 
         <p className="auth-switch">
-          <button onClick={() => {
-            setStage('auth');
-            setChallenge('');
-            setSecret('');
-            setMessage('');
-          }}>Volver al inicio de sesión</button>
+          <button onClick={resetAuth}>Volver al inicio de sesión</button>
         </p>
       </>}
 
