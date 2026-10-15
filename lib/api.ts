@@ -5,6 +5,20 @@ const TOKEN_KEY = 'cslb_mediateca_token';
 
 export const configured = !!API_BASE;
 
+type AuthUser = {
+  id:string;
+  name:string;
+  email:string;
+  owner:boolean;
+  teacher:boolean;
+  twoFactorEnabled?:boolean;
+};
+
+export type AuthResult =
+  | {token:string; user:AuthUser}
+  | {requires2fa:true; challenge:string; user:AuthUser}
+  | {requires2faSetup:true; challenge:string; secret:string; otpauthUri:string; user:AuthUser};
+
 function token() {
   if (typeof window === 'undefined') return '';
   return localStorage.getItem(TOKEN_KEY) || '';
@@ -21,11 +35,16 @@ async function request(path: string, init: RequestInit = {}) {
   const t = token();
   if (t) headers.set('Authorization', `Bearer ${t}`);
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers,
-    cache: 'no-store',
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers,
+      cache: 'no-store',
+    });
+  } catch {
+    throw new Error('No se pudo conectar con el NAS. Revisa que el servidor y Tailscale estén encendidos.');
+  }
 
   const type = res.headers.get('content-type') || '';
   const data = type.includes('application/json') ? await res.json() : await res.text();
@@ -40,14 +59,18 @@ async function request(path: string, init: RequestInit = {}) {
   return data;
 }
 
+function saveAuthResult(data: AuthResult) {
+  if ('token' in data && data.token) setToken(data.token);
+  return data;
+}
+
 export async function register(name: string, email: string, password: string) {
   const data = await request('/api/auth/register', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name, email, password}),
-  }) as {token: string; user: unknown};
-  setToken(data.token);
-  return data.user;
+  }) as AuthResult;
+  return saveAuthResult(data);
 }
 
 export async function login(email: string, password: string) {
@@ -55,7 +78,16 @@ export async function login(email: string, password: string) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({email, password}),
-  }) as {token: string; user: unknown};
+  }) as AuthResult;
+  return saveAuthResult(data);
+}
+
+export async function verify2fa(challenge:string, code:string) {
+  const data = await request('/api/auth/2fa', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({challenge, code}),
+  }) as {token:string; user:AuthUser};
   setToken(data.token);
   return data.user;
 }
@@ -63,7 +95,7 @@ export async function login(email: string, password: string) {
 export async function currentUser() {
   if (!token()) return null;
   try {
-    const data = await request('/api/me') as {user: unknown};
+    const data = await request('/api/me') as {user:AuthUser};
     return data.user;
   } catch {
     setToken('');
@@ -84,8 +116,8 @@ export async function loadLibrary() {
   return request('/api/library');
 }
 
-export async function mediaUrl(idOrPath: string) {
-  const data = await request(`/api/media/${encodeURIComponent(idOrPath)}/url`) as {url: string};
+export async function mediaUrl(id: string) {
+  const data = await request(`/api/media/${encodeURIComponent(id)}/url`) as {url: string};
   return data.url;
 }
 
@@ -101,7 +133,11 @@ export async function saveLibrary(body: FormData | any) {
     return request('/api/category', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({name: body.name, description: body.description}),
+      body: JSON.stringify({
+        name: body.name,
+        description: body.description,
+        parent: body.parent || null,
+      }),
     });
   }
 
