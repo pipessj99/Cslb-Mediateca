@@ -5,7 +5,7 @@ import {loadLibrary,saveLibrary,mediaUrl,signOut} from '../lib/api';
 import {
   Folder,Headphones,Video,Plus,Search,ArrowUpRight,Upload,LayoutGrid,
   MessageSquare,ShieldCheck,X,ChevronRight,ChevronLeft,Play,Trash2,
-  BookOpen,LogOut
+  BookOpen,LogOut,KeyRound
 } from 'lucide-react';
 
 type Category={
@@ -34,7 +34,7 @@ type Data={
   categories:Category[];
   media:Media[];
   comments:{id:string;media:string;body:string;author:string;created:string}[];
-  teachers:{email:string}[];
+  teachers:{name?:string;email:string}[];
 };
 
 export default function Mediateca(){
@@ -98,7 +98,29 @@ export default function Mediateca(){
       };
     }
     if(modal==='teachers'){
-      body={action:'teacher',email:f.get('email')};
+      body={
+        action:'teacher',
+        name:f.get('name'),
+        email:f.get('email'),
+        password:f.get('password')
+      };
+    }
+
+    if(modal==='account'){
+      const currentPassword=String(f.get('currentPassword')||'');
+      const newPassword=String(f.get('newPassword')||'');
+      const confirmPassword=String(f.get('confirmPassword')||'');
+
+      if(newPassword.length<10){
+        setError('La nueva contraseña debe tener al menos 10 caracteres.');
+        return;
+      }
+      if(newPassword!==confirmPassword){
+        setError('Las contraseñas nuevas no coinciden.');
+        return;
+      }
+
+      body={action:'password',currentPassword,newPassword};
     }
 
     if(await mutate(body)){
@@ -200,6 +222,10 @@ export default function Mediateca(){
             ?'Puedes revisar trabajos, organizar carpetas y dejar retroalimentación.'
             :'Solo tú y tus profesores pueden ver los archivos que subes.'}</p>
         </div>
+
+        <button className="nav" onClick={()=>setModal('account')}>
+          <KeyRound size={19}/>Mi cuenta
+        </button>
 
         {data?.user.owner&&
           <button className="nav" onClick={()=>setModal('teachers')}>
@@ -408,19 +434,27 @@ export default function Mediateca(){
         <section
           role="dialog"
           aria-modal="true"
-          aria-label={modal==='upload'?'Subir archivo':modal==='category'?'Nueva carpeta':'Gestionar profesores'}
+          aria-label={modal==='upload'?'Subir archivo':modal==='category'?'Nueva carpeta':modal==='account'?'Mi cuenta':'Gestionar profesores'}
           className="modal"
           onClick={e=>e.stopPropagation()}
         >
           <button className="close" aria-label="Cerrar" onClick={()=>setModal('')} disabled={busy}><X/></button>
           <span className="eyebrow">COMUNIDAD CSLB</span>
-          <h2>{modal==='upload'?'Sube tu trabajo':modal==='category'?(category?'Nueva subcarpeta':'Nueva carpeta'):'Profesores administradores'}</h2>
+          <h2>{modal==='upload'
+            ?'Sube tu trabajo'
+            :modal==='category'
+              ?(category?'Nueva subcarpeta':'Nueva carpeta')
+              :modal==='account'
+                ?'Mi cuenta'
+                :'Crear o autorizar profesor'}</h2>
 
           <p>{modal==='upload'
             ?'Los demás alumnos no podrán ver este archivo. Solo tú y tus profesores.'
             :modal==='category'
               ?'Solo profesores y administradores pueden crear la estructura de carpetas.'
-              :'Al autorizar un profesor, su sesión se cerrará y en el próximo ingreso deberá activar Google Authenticator.'}</p>
+              :modal==='account'
+                ?'Cambia tu contraseña cuando lo necesites.'
+                :'Crea la cuenta del profesor con correo y contraseña temporal. En su primer ingreso deberá cambiarla y después configurar Google Authenticator.'}</p>
 
           {error&&<p role="alert" className="alert">{error}</p>}
 
@@ -470,15 +504,74 @@ export default function Mediateca(){
                 Descripción
                 <textarea name="description" maxLength={200} placeholder="¿Qué se guardará en esta carpeta?"/>
               </label>
+            </>:modal==='account'?<>
+              <label>
+                Contraseña actual
+                <input
+                  type="password"
+                  name="currentPassword"
+                  minLength={10}
+                  maxLength={128}
+                  autoComplete="current-password"
+                  required
+                />
+              </label>
+
+              <label>
+                Nueva contraseña
+                <input
+                  type="password"
+                  name="newPassword"
+                  minLength={10}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  required
+                />
+              </label>
+
+              <label>
+                Repetir nueva contraseña
+                <input
+                  type="password"
+                  name="confirmPassword"
+                  minLength={10}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  required
+                />
+              </label>
             </>:<>
+              <label>
+                Nombre del profesor
+                <input name="name" maxLength={80} placeholder="Por ejemplo: Daniela Soto"/>
+              </label>
+
               <label>
                 Correo del profesor
                 <input type="email" name="email" required placeholder="profesor@colegio.cl"/>
               </label>
+
+              <label>
+                Contraseña temporal
+                <input
+                  type="password"
+                  name="password"
+                  minLength={10}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  required
+                  placeholder="Mínimo 10 caracteres"
+                />
+              </label>
+
+              <p style={{fontSize:'11px'}}>
+                El profesor deberá cambiar esta contraseña en su primer inicio de sesión.
+              </p>
+
               <div className="teacher-list">
                 {data?.teachers.map(t=>
                   <div key={t.email}>
-                    {t.email}
+                    <span>{t.name?`${t.name} · `:''}{t.email}</span>
                     <button type="button" aria-label={'Quitar rol a '+t.email} disabled={busy}
                       onClick={()=>void mutate({action:'teacher',email:t.email,remove:true})}>
                       <X size={16}/>
@@ -489,7 +582,15 @@ export default function Mediateca(){
             </>}
 
             <button disabled={busy||(modal==='upload'&&!leafCategories.length)} className="primary full">
-              {busy?'Guardando…':modal==='upload'?'Subir archivo':modal==='category'?'Crear carpeta':'Autorizar profesor'}
+              {busy
+                ?'Guardando…'
+                :modal==='upload'
+                  ?'Subir archivo'
+                  :modal==='category'
+                    ?'Crear carpeta'
+                    :modal==='account'
+                      ?'Cambiar contraseña'
+                      :'Crear / autorizar profesor'}
             </button>
           </form>
         </section>

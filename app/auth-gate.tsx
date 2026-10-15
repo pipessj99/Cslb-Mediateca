@@ -2,9 +2,9 @@
 
 import {FormEvent, useEffect, useState} from 'react';
 import QRCode from 'qrcode';
-import {configured, currentUser, login, register, verify2fa, type AuthResult} from '../lib/api';
+import {changeTemporaryPassword, configured, currentUser, login, register, verify2fa, type AuthResult} from '../lib/api';
 
-type Stage = 'auth' | '2fa' | '2fa-setup';
+type Stage = 'auth' | 'password-change' | '2fa' | '2fa-setup';
 
 export default function AuthGate({children}:{children:React.ReactNode}) {
   const [ready,setReady] = useState(false);
@@ -60,7 +60,11 @@ export default function AuthGate({children}:{children:React.ReactNode}) {
 
     setChallenge(result.challenge);
 
-    if ('requires2faSetup' in result) {
+    if ('requiresPasswordChange' in result) {
+      setSecret('');
+      setOtpauthUri('');
+      setStage('password-change');
+    } else if ('requires2faSetup' in result) {
       setSecret(result.secret);
       setOtpauthUri(result.otpauthUri);
       setStage('2fa-setup');
@@ -88,6 +92,25 @@ export default function AuthGate({children}:{children:React.ReactNode}) {
       }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'No se pudo iniciar sesión.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitPasswordChange(e:FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setBusy(true);
+    setMessage('');
+    const f = new FormData(e.currentTarget);
+    const password = String(f.get('newPassword') || '');
+    const confirm = String(f.get('confirmPassword') || '');
+
+    try {
+      if (password.length < 10) throw new Error('La nueva contraseña debe tener al menos 10 caracteres.');
+      if (password !== confirm) throw new Error('Las contraseñas no coinciden.');
+      handleAuthResult(await changeTemporaryPassword(challenge, password));
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'No se pudo cambiar la contraseña.');
     } finally {
       setBusy(false);
     }
@@ -175,6 +198,47 @@ export default function AuthGate({children}:{children:React.ReactNode}) {
             </button>
           </p>
         </>}
+      </> : stage === 'password-change' ? <>
+        <h1>Cambia tu contraseña temporal.</h1>
+        <p>
+          El administrador creó tu cuenta con una contraseña temporal.
+          Antes de entrar debes elegir una contraseña personal.
+        </p>
+
+        <form onSubmit={submitPasswordChange}>
+          <label>
+            Nueva contraseña
+            <input
+              name="newPassword"
+              type="password"
+              minLength={10}
+              maxLength={128}
+              autoComplete="new-password"
+              required
+              autoFocus
+            />
+          </label>
+
+          <label>
+            Repetir nueva contraseña
+            <input
+              name="confirmPassword"
+              type="password"
+              minLength={10}
+              maxLength={128}
+              autoComplete="new-password"
+              required
+            />
+          </label>
+
+          <button disabled={busy} className="primary full">
+            {busy ? 'Guardando…' : 'Cambiar contraseña y continuar'}
+          </button>
+        </form>
+
+        <p className="auth-switch">
+          <button onClick={resetAuth}>Volver al inicio de sesión</button>
+        </p>
       </> : <>
         <h1>{stage === '2fa-setup' ? 'Protege tu cuenta administradora.' : 'Código de administrador.'}</h1>
 

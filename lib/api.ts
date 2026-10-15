@@ -12,10 +12,12 @@ type AuthUser = {
   owner:boolean;
   teacher:boolean;
   twoFactorEnabled?:boolean;
+  mustChangePassword?:boolean;
 };
 
 export type AuthResult =
   | {token:string; user:AuthUser}
+  | {requiresPasswordChange:true; challenge:string; user:AuthUser}
   | {requires2fa:true; challenge:string; user:AuthUser}
   | {requires2faSetup:true; challenge:string; secret:string; otpauthUri:string; user:AuthUser};
 
@@ -56,6 +58,7 @@ async function request(path: string, init: RequestInit = {}) {
         : String(data || `Error ${res.status}`);
     throw new Error(message);
   }
+
   return data;
 }
 
@@ -78,6 +81,15 @@ export async function login(email: string, password: string) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({email, password}),
+  }) as AuthResult;
+  return saveAuthResult(data);
+}
+
+export async function changeTemporaryPassword(challenge:string, newPassword:string) {
+  const data = await request('/api/auth/change-temp-password', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({challenge, newPassword}),
   }) as AuthResult;
   return saveAuthResult(data);
 }
@@ -153,7 +165,23 @@ export async function saveLibrary(body: FormData | any) {
     return request('/api/teacher', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({email: body.email, remove: !!body.remove}),
+      body: JSON.stringify({
+        name: body.name || '',
+        email: body.email,
+        password: body.password || '',
+        remove: !!body.remove,
+      }),
+    });
+  }
+
+  if (body.action === 'password') {
+    return request('/api/account/password', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        currentPassword: body.currentPassword,
+        newPassword: body.newPassword,
+      }),
     });
   }
 
