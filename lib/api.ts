@@ -195,7 +195,20 @@ export async function loadLibrary() {
 
 export async function mediaUrl(id: string) {
   const data = await request(`/api/media/${encodeURIComponent(id)}/url`) as {url: string};
-  return data.url;
+
+  if (/^https?:\/\//i.test(data.url)) {
+    try {
+      const u = new URL(data.url);
+      // Backends behind a reverse proxy can accidentally report 127.0.0.1
+      // or their private host. Always keep the returned path/token but use
+      // the public NAS base that the frontend is already using successfully.
+      return `${API_BASE}${u.pathname}${u.search}`;
+    } catch {
+      return data.url;
+    }
+  }
+
+  return `${API_BASE}${data.url.startsWith('/') ? '' : '/'}${data.url}`;
 }
 
 export async function saveLibrary(body: FormData | any) {
